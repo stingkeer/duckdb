@@ -8,8 +8,8 @@
   <h3 align="center">GORM DuckDB Driver</h3>
 
   <div style="display: flex; justify-content: center; gap: 10px; flex-wrap: wrap;">
-    <a href="https://pkg.go.dev/github.com/alifiroozi80/duckdb" style="text-decoration: none;">
-      <img src="https://pkg.go.dev/badge/github.com/alifiroozi80/duckdb.svg" alt="Go Reference">
+    <a href="https://pkg.go.dev/go.aew.app/duckdb.v1" style="text-decoration: none;">
+      <img src="https://pkg.go.dev/badge/go.aew.app/duckdb.v1.svg" alt="Go Reference">
     </a>
     <a href="https://img.shields.io/github/go-mod/go-version/alifiroozi80/duckdb?logo=go" style="text-decoration: none;">
       <img src="https://img.shields.io/github/go-mod/go-version/alifiroozi80/duckdb?logo=go" alt="Go version">
@@ -17,8 +17,8 @@
     <a href="https://img.shields.io/github/v/release/alifiroozi80/duckdb" style="text-decoration: none;">
       <img src="https://img.shields.io/github/v/release/alifiroozi80/duckdb" alt="GitHub release">
     </a>
-    <a href="https://goreportcard.com/report/github.com/alifiroozi80/duckdb" style="text-decoration: none;">
-      <img src="https://goreportcard.com/badge/github.com/alifiroozi80/duckdb" alt="Go Report Card">
+    <a href="https://goreportcard.com/report/go.aew.app/duckdb.v1" style="text-decoration: none;">
+      <img src="https://goreportcard.com/badge/go.aew.app/duckdb.v1" alt="Go Report Card">
     </a>
     <a href="https://img.shields.io/github/license/alifiroozi80/duckdb?&color=blue" style="text-decoration: none;">
       <img src="https://img.shields.io/github/license/alifiroozi80/duckdb?&color=blue" alt="License">
@@ -26,7 +26,7 @@
   </div>
 
   <p align="center" style="margin-top: 20px;">
-    <a href="https://github.com/alifiroozi80/duckdb/issues" style="text-decoration: none;">Report Bug</a>
+    <a href="https://go.aew.app/duckdb.v1/issues" style="text-decoration: none;">Report Bug</a>
   </p>
 </div>
 
@@ -37,7 +37,7 @@
 
 ```go
 import (
-  "github.com/alifiroozi80/duckdb"
+  "go.aew.app/duckdb.v1"
   "gorm.io/gorm"
 )
 
@@ -137,7 +137,7 @@ Catalogue Error: Type with name jsonb does not exist!
 
 Any contributions you make are **greatly appreciated**.
 
-See [here](https://github.com/alifiroozi80/duckdb/blob/main/CONTRIBUTING.md) for more details on contributing.
+See [here](https://go.aew.app/duckdb.v1/blob/main/CONTRIBUTING.md) for more details on contributing.
 
 ### Roadmap
 
@@ -145,13 +145,13 @@ See [here](https://github.com/alifiroozi80/duckdb/blob/main/CONTRIBUTING.md) for
 - [ ] Implement TODO functions:
 	- ColumnTypes
 	- CreateConstraint
-- [ ] Support `sequence` for each field that needs auto-increment (See [here](https://github.com/alifiroozi80/duckdb/issues/1)).
+- [ ] Support `sequence` for each field that needs auto-increment (See [here](https://go.aew.app/duckdb.v1/issues/1)).
 
 <!-- LICENSE -->
 
 ## License
 
-The license is under the MIT License. See [LICENSE](https://github.com/alifiroozi80/duckdb/blob/main/LICENSE) for more
+The license is under the MIT License. See [LICENSE](https://go.aew.app/duckdb.v1/blob/main/LICENSE) for more
 information.
 
 ## ❤ Show your support

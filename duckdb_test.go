@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alifiroozi80/duckdb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.aew.app/duckdb.v1"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"gorm.io/gorm/schema"

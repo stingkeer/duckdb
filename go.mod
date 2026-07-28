@@ -1,4 +1,4 @@
-module github.com/alifiroozi80/duckdb
+module go.aew.app/duckdb.v1
 
 go 1.24.2
 
