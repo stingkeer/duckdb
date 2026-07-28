@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	_ "github.com/marcboeker/go-duckdb"
+	_ "github.com/duckdb/duckdb-go/v2"
 	"gorm.io/gorm"
 	"gorm.io/gorm/callbacks"
 	"gorm.io/gorm/clause"
@@ -45,7 +45,11 @@ func (dialector Dialector) Initialize(db *gorm.DB) (err error) {
 		dialector.DriverName = DriverName
 	}
 
-	callbacks.RegisterDefaultCallbacks(db, &callbacks.Config{})
+	callbacks.RegisterDefaultCallbacks(db, &callbacks.Config{
+		CreateClauses: []string{"INSERT", "VALUES", "ON CONFLICT", "RETURNING"},
+		UpdateClauses: []string{"UPDATE", "SET", "FROM", "WHERE", "RETURNING"},
+		DeleteClauses: []string{"DELETE", "FROM", "WHERE", "RETURNING"},
+	})
 
 	if dialector.Conn != nil {
 		db.ConnPool = dialector.Conn
@@ -98,13 +102,23 @@ func (dialector Dialector) ClauseBuilders() map[string]clause.ClauseBuilder {
 				}
 				if lmt >= 0 || limit.Offset > 0 {
 					builder.WriteString("LIMIT ")
-					builder.WriteString(strconv.Itoa(lmt))
+					if lmt >= 0 {
+						builder.WriteString(strconv.Itoa(lmt))
+					} else {
+						builder.WriteString("ALL")
+					}
 				}
 				if limit.Offset > 0 {
 					builder.WriteString(" OFFSET ")
 					builder.WriteString(strconv.Itoa(limit.Offset))
 				}
 			}
+		},
+		"FOR": func(c clause.Clause, builder clause.Builder) {
+			if _, ok := c.Expression.(clause.Locking); ok {
+				return
+			}
+			c.Build(builder)
 		},
 	}
 }
@@ -130,24 +144,13 @@ func (dialector Dialector) DataTypeOf(field *schema.Field) string {
 		if field.DataType == schema.Uint {
 			size++
 		}
-		if field.AutoIncrement {
-			switch {
-			case size <= 16:
-				return "smallint"
-			case size <= 32:
-				return "integer"
-			default:
-				return "bigint"
-			}
-		} else {
-			switch {
-			case size <= 16:
-				return "smallint"
-			case size <= 32:
-				return "integer"
-			default:
-				return "bigint"
-			}
+		switch {
+		case size <= 16:
+			return "smallint"
+		case size <= 32:
+			return "integer"
+		default:
+			return "bigint"
 		}
 	case schema.Float:
 		if field.Precision > 0 {
@@ -170,7 +173,7 @@ func (dialector Dialector) DataTypeOf(field *schema.Field) string {
 	case schema.Bytes:
 		return "blob"
 	default:
-		if field.Tag.Get("gorm") == "type:jsonb" {
+		if field.TagSettings["TYPE"] == "jsonb" {
 			return "json"
 		}
 		return dialector.getSchemaCustomType(field)
@@ -211,10 +214,10 @@ func (dialector Dialector) QuoteTo(writer clause.Writer, str string) {
 
 	for _, v := range []byte(str) {
 		switch v {
-		case '`':
+		case '"':
 			continuousBacktick++
 			if continuousBacktick == 2 {
-				writer.WriteString("")
+				writer.WriteString(`""`)
 				continuousBacktick = 0
 			}
 		case '.':
@@ -222,13 +225,13 @@ func (dialector Dialector) QuoteTo(writer clause.Writer, str string) {
 				shiftDelimiter = 0
 				underQuoted = false
 				continuousBacktick = 0
-				writer.WriteString("")
+				writer.WriteByte('"')
 			}
 			writer.WriteByte(v)
 			continue
 		default:
 			if shiftDelimiter-continuousBacktick <= 0 && !underQuoted {
-				writer.WriteString("")
+				writer.WriteByte('"')
 				underQuoted = true
 				if selfQuoted = continuousBacktick > 0; selfQuoted {
 					continuousBacktick -= 1
@@ -236,7 +239,7 @@ func (dialector Dialector) QuoteTo(writer clause.Writer, str string) {
 			}
 
 			for ; continuousBacktick > 0; continuousBacktick -= 1 {
-				writer.WriteString("")
+				writer.WriteString(`""`)
 			}
 
 			writer.WriteByte(v)
@@ -245,9 +248,9 @@ func (dialector Dialector) QuoteTo(writer clause.Writer, str string) {
 	}
 
 	if continuousBacktick > 0 && !selfQuoted {
-		writer.WriteString("")
+		writer.WriteString(`""`)
 	}
-	writer.WriteString("")
+	writer.WriteByte('"')
 }
 
 func (dialector Dialector) Explain(sql string, vars ...interface{}) string {

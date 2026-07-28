@@ -3,7 +3,6 @@ package duckdb
 import (
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 
 	"gorm.io/gorm"
@@ -71,7 +70,14 @@ func (m Migrator) createSequence(values ...interface{}) error {
 	for _, value := range m.ReorderModels(values, false) {
 		if err := m.RunWithValue(value, func(stmt *gorm.Statement) error {
 			if stmt.Schema != nil {
-				for range stmt.Schema.DBNames {
+				hasAutoIncrement := false
+				for _, field := range stmt.Schema.FieldsByDBName {
+					if field.AutoIncrement {
+						hasAutoIncrement = true
+						break
+					}
+				}
+				if hasAutoIncrement {
 					if execErr := m.DB.Exec(
 						"CREATE SEQUENCE IF NOT EXISTS ?",
 						m.CurrentTable(stmt)).Error; execErr != nil {
@@ -110,14 +116,9 @@ func (m Migrator) CreateTable(values ...interface{}) (err error) {
 			for _, dbName := range stmt.Schema.DBNames {
 				field := stmt.Schema.FieldsByDBName[dbName]
 				if !field.IgnoreMigration {
-					if dbName == "id" {
-						// s := fmt.Sprintf("{%s  %!s(bool=false)}", m.CurrentTable(stmt).(clause.Table).Name)
-						s := "{" + m.CurrentTable(stmt).(clause.Table).Name + "  %!s(bool=false)}"
-						re := regexp.MustCompile(`\{([^ ]+)`)
-						match := re.FindStringSubmatch(s)
-						pk := fmt.Sprintf("? ? DEFAULT nextval('%s')", match[1])
-						createTableSQL += pk
-
+					if field.AutoIncrement {
+						tableName := m.CurrentTable(stmt).(clause.Table).Name
+						createTableSQL += fmt.Sprintf("? ? DEFAULT nextval('%s')", tableName)
 					} else {
 						createTableSQL += "? ?"
 					}
@@ -289,7 +290,7 @@ func (m Migrator) RenameTable(oldName, newName interface{}) (err error) {
 		return
 	}
 
-	return m.DB.Exec("RENAME TABLE ? TO ?",
+	return m.DB.Exec("ALTER TABLE ? RENAME TO ?",
 		clause.Table{Name: oldTable},
 		clause.Table{Name: newTable},
 	).Error
@@ -385,12 +386,13 @@ func (m Migrator) RenameColumn(dst interface{}, oldName, field string) error {
 // func (m Migrator) ColumnTypes(value interface{}) (columnTypes []gorm.ColumnType, err error)
 
 // Views
+
 func (m Migrator) CreateView(name string, option gorm.ViewOption) error {
-	return ErrDuckDBNotSupported
+	return m.Migrator.CreateView(name, option)
 }
 
 func (m Migrator) DropView(name string) error {
-	return ErrDuckDBNotSupported
+	return m.Migrator.DropView(name)
 }
 
 // Constraints
@@ -403,15 +405,37 @@ func (m Migrator) HasConstraint(value interface{}, name string) bool {
 	var count int64
 	m.RunWithValue(value, func(stmt *gorm.Statement) error {
 		constraint, table := m.GuessConstraintInterfaceAndTable(stmt, name)
-		if constraint != nil {
-			name = constraint.GetName()
+		if constraint == nil {
+			return nil
 		}
+
 		currentSchema, curTable := m.CurrentSchema(stmt, table)
 
-		return m.DB.Raw(
-			"SELECT count(*) FROM INFORMATION_SCHEMA.table_constraints WHERE table_schema = ? AND table_name = ? AND constraint_name = ?",
-			currentSchema, curTable, name,
-		).Scan(&count).Error
+		// DuckDB does not store constraint names in its system catalog.
+		// Use duckdb_constraints() and match by constraint type instead.
+		constraintSQL, _ := constraint.Build()
+		constraintUpper := strings.ToUpper(constraintSQL)
+
+		var constraintType string
+		switch {
+		case strings.Contains(constraintUpper, "FOREIGN KEY"):
+			constraintType = "FOREIGN KEY"
+		case strings.Contains(constraintUpper, "PRIMARY KEY"):
+			constraintType = "PRIMARY KEY"
+		case strings.Contains(constraintUpper, "UNIQUE"):
+			constraintType = "UNIQUE"
+		case strings.Contains(constraintUpper, "CHECK"):
+			constraintType = "CHECK"
+		}
+
+		query := "SELECT count(*) FROM duckdb_constraints() WHERE schema_name = ? AND table_name = ?"
+		args := []interface{}{currentSchema, curTable}
+		if constraintType != "" {
+			query += " AND constraint_type = ?"
+			args = append(args, constraintType)
+		}
+
+		return m.DB.Raw(query, args...).Scan(&count).Error
 	})
 
 	return count > 0
@@ -438,13 +462,7 @@ func (m Migrator) CreateIndex(value interface{}, name string) error {
 				if idx.Class != "" {
 					createIndexSQL += idx.Class + " "
 				}
-				createIndexSQL += "INDEX IF NOT EXISTS ? ON ?"
-
-				if idx.Type != "" {
-					createIndexSQL += " USING " + idx.Type + "(?)"
-				} else {
-					createIndexSQL += " ?"
-				}
+				createIndexSQL += "INDEX IF NOT EXISTS ? ON ? (?)"
 
 				err := m.DB.Exec(createIndexSQL, values...).Error
 				if err != nil {
