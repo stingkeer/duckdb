@@ -198,7 +198,36 @@ func (dialector Dialector) getSchemaCustomType(field *schema.Field) string {
 		}
 	}
 
+	// Translate an inline MySQL-style enum('a','b','c') tag into a named DuckDB
+	// ENUM catalog type. DuckDB requires the type to exist (via CREATE TYPE)
+	// before a column can reference it; the migrator's createEnumTypes pre-pass
+	// creates <table>_<column> ahead of CREATE TABLE. Here we only emit the name.
+	if typeName, _, ok := parseInlineEnum(sqlType, field); ok {
+		return typeName
+	}
+
 	return sqlType
+}
+
+// parseInlineEnum inspects a column's declared SQL type. If it is an inline
+// MySQL-style enum('a','b','c'), it returns the DuckDB catalog enum type name
+// to use ("<table>_<column>"), the inner values substring ("'a','b','c'"), and
+// ok=true. Otherwise ok=false.
+//
+// The named type must be created out-of-band (see Migrator.createEnumTypes)
+// because DuckDB has no inline enum column syntax and no CREATE TYPE in DDL.
+func parseInlineEnum(rawType string, field *schema.Field) (typeName, values string, ok bool) {
+	t := strings.TrimSpace(rawType)
+	lower := strings.ToLower(t)
+	if !strings.HasPrefix(lower, "enum(") || !strings.HasSuffix(lower, ")") {
+		return "", "", false
+	}
+	values = t[len("enum("):]              // drop leading "enum("
+	values = values[:len(values)-1]        // drop trailing ")"
+	if field.Schema != nil && field.DBName != "" {
+		typeName = field.Schema.Table + "_" + field.DBName
+	}
+	return typeName, values, true
 }
 
 func (dialector Dialector) BindVarTo(writer clause.Writer, stmt *gorm.Statement, v interface{}) {
@@ -254,7 +283,12 @@ func (dialector Dialector) QuoteTo(writer clause.Writer, str string) {
 }
 
 func (dialector Dialector) Explain(sql string, vars ...interface{}) string {
-	return logger.ExplainSQL(sql, nil, `"`, vars...)
+	// DuckDB (PostgreSQL-compatible) treats "double quotes" as identifiers and
+	// 'single quotes' as string literals. String-column DEFAULTs are rendered
+	// through this escaper, so using `"` produces `DEFAULT "0.0.0.0"`, which DuckDB
+	// parses as a column reference ("DEFAULT value cannot contain column names").
+	// Use `'` to emit proper string literals.
+	return logger.ExplainSQL(sql, nil, `'`, vars...)
 }
 
 func (dialectopr Dialector) SavePoint(tx *gorm.DB, name string) error {

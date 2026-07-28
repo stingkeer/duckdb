@@ -51,7 +51,11 @@ func TestNewWithConfig(t *testing.T) {
 func TestExplain(t *testing.T) {
 	d := duckdb.Open(":memory:")
 	explained := d.Explain("SELECT * FROM users WHERE name = ?", "John")
-	assert.Contains(t, explained, `"John"`)
+	// DuckDB (Postgres-compatible) uses single quotes for string literals;
+	// double quotes denote an identifier. Bound string values must render as
+	// 'John', otherwise DEFAULT/WHERE clauses break with "cannot contain
+	// column names" errors.
+	assert.Contains(t, explained, `'John'`)
 }
 
 // ---------------------------------------------------------------------------

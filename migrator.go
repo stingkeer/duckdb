@@ -93,9 +93,55 @@ func (m Migrator) createSequence(values ...interface{}) error {
 	return nil
 }
 
+// createEnumTypes creates the named DuckDB ENUM catalog types for every column
+// whose gorm tag declares an inline enum('a','b','c') type, mirroring the way
+// createSequence provisions auto-increment sequences. The column DDL then
+// references the named type (see Dialector.getSchemaCustomType).
+//
+// DuckDB has no `CREATE TYPE IF NOT EXISTS`, so each creation is guarded by a
+// duckdb_types() existence check; re-running AutoMigrate is safe.
+func (m Migrator) createEnumTypes(values ...interface{}) error {
+	for _, value := range m.ReorderModels(values, false) {
+		if err := m.RunWithValue(value, func(stmt *gorm.Statement) error {
+			if stmt.Schema == nil {
+				return nil
+			}
+			for _, dbName := range stmt.Schema.DBNames {
+				field := stmt.Schema.FieldsByDBName[dbName]
+				typeName, values, ok := parseInlineEnum(string(field.DataType), field)
+				if !ok || typeName == "" {
+					continue
+				}
+				var count int64
+				if err := m.DB.Raw(
+					"SELECT count(*) FROM duckdb_types() WHERE type_name = ?",
+					typeName,
+				).Scan(&count).Error; err != nil {
+					return err
+				}
+				if count > 0 {
+					continue
+				}
+				ddl := fmt.Sprintf("CREATE TYPE %s AS ENUM(%s)", typeName, values)
+				if err := m.DB.Exec(ddl).Error; err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (m Migrator) CreateTable(values ...interface{}) (err error) {
 
 	if err := m.createSequence(values...); err != nil {
+		return err
+	}
+
+	if err := m.createEnumTypes(values...); err != nil {
 		return err
 	}
 
@@ -302,6 +348,38 @@ func (m Migrator) GetTables() (tableList []string, err error) {
 }
 
 // Columns
+
+// AddColumn provisions any inline-enum catalog type the new column references
+// before delegating to the base ADD COLUMN, so AutoMigrate can add enum
+// columns to an existing table (CreateTable's createEnumTypes only covers
+// fresh-table creation).
+func (m Migrator) AddColumn(value interface{}, name string) error {
+	return m.RunWithValue(value, func(stmt *gorm.Statement) error {
+		if stmt.Schema == nil {
+			return errors.New("failed to get schema")
+		}
+		f := stmt.Schema.LookUpField(name)
+		if f == nil {
+			return fmt.Errorf("failed to look up field with name: %s", name)
+		}
+		if typeName, values, ok := parseInlineEnum(string(f.DataType), f); ok && typeName != "" {
+			var count int64
+			if err := m.DB.Raw(
+				"SELECT count(*) FROM duckdb_types() WHERE type_name = ?",
+				typeName,
+			).Scan(&count).Error; err != nil {
+				return err
+			}
+			if count == 0 {
+				if err := m.DB.Exec(fmt.Sprintf("CREATE TYPE %s AS ENUM(%s)", typeName, values)).Error; err != nil {
+					return err
+				}
+			}
+		}
+		return m.Migrator.AddColumn(value, name)
+	})
+}
+
 func (m Migrator) DropColumn(dst interface{}, field string) error {
 	if err := m.Migrator.DropColumn(dst, field); err != nil {
 		return err
@@ -322,13 +400,20 @@ func (m Migrator) resetPreparedStmts() {
 }
 
 func (m Migrator) MigrateColumn(value interface{}, field *schema.Field, columnType gorm.ColumnType) error {
-	// skip primary field
-	if !field.PrimaryKey {
-		if err := m.Migrator.MigrateColumn(value, field, columnType); err != nil {
-			return err
-		}
-	}
-
+	// NOTE: intentionally do NOT delegate to the base gorm MigrateColumn here.
+	//
+	// DuckDB's ColumnTypes introspection is incomplete (see the ColumnTypes TODO
+	// below): VARCHAR(N) reads back as bare VARCHAR (length not preserved), and
+	// column default/nullable metadata is not reliably reported. The base
+	// smart-migrate therefore sees false drift on EVERY run and fires AlterColumn,
+	// whose "ALTER COLUMN ... TYPE T NOT NULL DEFAULT ..." form is Postgres syntax
+	// that DuckDB rejects ("syntax error at or near NOT"). That made AutoMigrate
+	// crash on the second startup against an existing .ddb file.
+	//
+	// Genuinely new columns are still added by AutoMigrate via AddColumn (a
+	// separate path), so the only capability dropped here is in-place ALTERs of
+	// existing columns — which DuckDB's ALTER COLUMN cannot express in one clause
+	// anyway. We keep only the comment sync below.
 	return m.RunWithValue(value, func(stmt *gorm.Statement) error {
 		var description string
 		currentSchema, curTable := m.CurrentSchema(stmt, stmt.Table)
